@@ -8,9 +8,6 @@ import (
 type UserValidator interface {
 	// ValidateUserActive checks if user exists and is active
 	ValidateUserActive(ctx context.Context, userID, orgID string) error
-	
-	// GetUserPermissions returns user's permissions (for future use)
-	GetUserPermissions(ctx context.Context, userID string) ([]string, error)
 }
 
 // ServiceValidator interface for validating services against database  
@@ -75,9 +72,6 @@ func (v *NoOpUserValidator) ValidateUserActive(ctx context.Context, userID, orgI
 	return nil // Always allow
 }
 
-func (v *NoOpUserValidator) GetUserPermissions(ctx context.Context, userID string) ([]string, error) {
-	return []string{}, nil // No permissions
-}
 
 // NoOpServiceValidator provides a no-op implementation for testing
 type NoOpServiceValidator struct{}

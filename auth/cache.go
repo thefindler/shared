@@ -212,10 +212,7 @@ func (v *CachedUserValidator) ValidateUserActive(ctx context.Context, userID, or
 	return err
 }
 
-// GetUserPermissions delegates to underlying validator (no caching for permissions)
-func (v *CachedUserValidator) GetUserPermissions(ctx context.Context, userID string) ([]string, error) {
-	return v.validator.GetUserPermissions(ctx, userID)
-}
+// GetUserPermissions method removed - not needed
 
 // CachedServiceValidator wraps a ServiceValidator with caching
 type CachedServiceValidator struct {

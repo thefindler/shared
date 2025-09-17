@@ -6,66 +6,15 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// TokenValidator handles JWT token validation with improved design
-type TokenValidator struct {
-	config *JWTConfig
-}
-
-// NewTokenValidator creates a new token validator
-func NewTokenValidator() (*TokenValidator, error) {
-	if jwtConfig == nil || len(jwtConfig.SecretKey) == 0 {
-		return nil, fmt.Errorf("JWT configuration not initialized")
-	}
-	return &TokenValidator{config: jwtConfig}, nil
-}
+// Direct token validation functions - no unnecessary structs
 
 // ValidateToken validates a JWT token and returns appropriate claims
 func ValidateToken(tokenString string) (*UserClaims, *ServiceClaims, error) {
-	validator, err := NewTokenValidator()
-	if err != nil {
-		return nil, nil, err
-	}
-	return validator.validate(tokenString)
-}
-
-// ParseClaims extracts claims from token without full validation
-func ParseClaims(tokenString string) (jwt.Claims, error) {
-	validator, err := NewTokenValidator()
-	if err != nil {
-		return nil, err
+	if jwtConfig == nil || len(jwtConfig.SecretKey) == 0 {
+		return nil, nil, fmt.Errorf("JWT configuration not initialized")
 	}
 	
-	token, err := jwt.Parse(tokenString, validator.keyFunc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse token: %w", err)
-	}
-	
-	return token.Claims, nil
-}
-
-// GetTokenType extracts token type from token string
-func GetTokenType(tokenString string) (TokenType, error) {
-	claims, err := ParseClaims(tokenString)
-	if err != nil {
-		return "", err
-	}
-	
-	mapClaims, ok := claims.(jwt.MapClaims)
-	if !ok {
-		return "", fmt.Errorf("invalid claims format")
-	}
-	
-	tokenType, ok := mapClaims["token_type"].(string)
-	if !ok {
-		return "", fmt.Errorf("missing token_type claim")
-	}
-	
-	return TokenType(tokenType), nil
-}
-
-// validate performs full token validation and returns typed claims
-func (v *TokenValidator) validate(tokenString string) (*UserClaims, *ServiceClaims, error) {
-	token, err := jwt.Parse(tokenString, v.keyFunc)
+	token, err := jwt.Parse(tokenString, keyFunc)
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid token: %w", err)
 	}
@@ -74,20 +23,20 @@ func (v *TokenValidator) validate(tokenString string) (*UserClaims, *ServiceClai
 		return nil, nil, fmt.Errorf("token is not valid")
 	}
 	
-	return v.extractTypedClaims(token)
+	return extractTypedClaims(token)
 }
 
 // keyFunc provides the key for token validation
-func (v *TokenValidator) keyFunc(token *jwt.Token) (interface{}, error) {
+func keyFunc(token *jwt.Token) (interface{}, error) {
 	// Validate signing method
 	if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 		return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 	}
-	return v.config.SecretKey, nil
+	return jwtConfig.SecretKey, nil
 }
 
 // extractTypedClaims converts generic claims to specific types
-func (v *TokenValidator) extractTypedClaims(token *jwt.Token) (*UserClaims, *ServiceClaims, error) {
+func extractTypedClaims(token *jwt.Token) (*UserClaims, *ServiceClaims, error) {
 	mapClaims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
 		return nil, nil, fmt.Errorf("invalid claims format")
@@ -100,11 +49,11 @@ func (v *TokenValidator) extractTypedClaims(token *jwt.Token) (*UserClaims, *Ser
 	
 	switch TokenType(tokenType) {
 	case AccessToken, RefreshToken:
-		userClaims, err := v.parseUserClaims(mapClaims)
+		userClaims, err := parseUserClaims(mapClaims)
 		return userClaims, nil, err
 		
 	case ServiceToken:
-		serviceClaims, err := v.parseServiceClaims(mapClaims)
+		serviceClaims, err := parseServiceClaims(mapClaims)
 		return nil, serviceClaims, err
 		
 	default:
@@ -113,7 +62,7 @@ func (v *TokenValidator) extractTypedClaims(token *jwt.Token) (*UserClaims, *Ser
 }
 
 // parseUserClaims converts map claims to UserClaims
-func (v *TokenValidator) parseUserClaims(claims jwt.MapClaims) (*UserClaims, error) {
+func parseUserClaims(claims jwt.MapClaims) (*UserClaims, error) {
 	userClaims := &UserClaims{}
 	
 	if userID, ok := claims["user_id"].(string); ok {
@@ -144,7 +93,7 @@ func (v *TokenValidator) parseUserClaims(claims jwt.MapClaims) (*UserClaims, err
 }
 
 // parseServiceClaims converts map claims to ServiceClaims
-func (v *TokenValidator) parseServiceClaims(claims jwt.MapClaims) (*ServiceClaims, error) {
+func parseServiceClaims(claims jwt.MapClaims) (*ServiceClaims, error) {
 	serviceClaims := &ServiceClaims{}
 	
 	if serviceName, ok := claims["service_name"].(string); ok {

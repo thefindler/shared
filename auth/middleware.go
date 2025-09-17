@@ -78,16 +78,6 @@ func ValidateTokenWithDB(ctx context.Context, tokenString string) (*AuthContext,
 		if err != nil {
 			return nil, fmt.Errorf("user validation failed: %w", err)
 		}
-		
-		return &AuthContext{
-			AuthType: "user",
-			User: &AuthUser{
-				UserID:         userClaims.UserID,
-				OrganisationID: userClaims.OrganisationID,
-				Username:       userClaims.Username,
-				Role:           userClaims.Role,
-			},
-		}, nil
 	}
 	
 	if serviceClaims != nil {
@@ -96,18 +86,10 @@ func ValidateTokenWithDB(ctx context.Context, tokenString string) (*AuthContext,
 		if err != nil {
 			return nil, fmt.Errorf("service validation failed: %w", err)
 		}
-		
-		return &AuthContext{
-			AuthType: "service",
-			Service: &AuthService{
-				ServiceName: serviceClaims.ServiceName,
-				ServiceID:   serviceClaims.ServiceID,
-				Permissions: serviceClaims.Permissions,
-			},
-		}, nil
 	}
 	
-	return nil, fmt.Errorf("no valid claims found")
+	// Build and return auth context
+	return buildAuthContext(userClaims, serviceClaims), nil
 }
 
 // ExtractTokenFromHeader extracts Bearer token from Authorization header
