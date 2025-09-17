@@ -55,41 +55,43 @@ func ValidateTokenWithDB(ctx context.Context, tokenString string) (*AuthContext,
 		return nil, fmt.Errorf("auth package not initialized - call auth.Initialize() first")
 	}
 	
-	// 1. Validate JWT structure, signature, expiry (existing function)
-	userClaims, serviceClaims, err := ValidateToken(tokenString)
+	// 1. Validate JWT structure, signature, expiry (unified function)
+	claims, err := ValidateToken(tokenString)
 	if err != nil {
 		return nil, fmt.Errorf("invalid token: %w", err)
 	}
 	
 	// Skip DB validation if configured
 	if globalAuthConfig.SkipDBValidation {
-		return buildAuthContext(userClaims, serviceClaims), nil
+		return buildAuthContext(claims), nil
 	}
 	
-	// 2. Validate against database
-	if userClaims != nil {
-		// Ensure it's an access token for API calls
-		if userClaims.TokenType != AccessToken {
-			return nil, fmt.Errorf("access token required for API calls")
+	// 2. Ensure it's an access token for API calls
+	if claims.TokenType != AccessToken {
+		return nil, fmt.Errorf("access token required for API calls")
+	}
+	
+	// 3. Validate against database based on user type
+	if claims.UserType == "service" {
+		// Validate service is still active in DB
+		err = globalAuthConfig.ServiceValidator.ValidateServiceActive(ctx, claims.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("service validation failed: %w", err)
 		}
-		
+	} else {
 		// Validate user is still active in DB
-		err = globalAuthConfig.UserValidator.ValidateUserActive(ctx, userClaims.UserID, userClaims.OrganisationID)
+		var orgID string
+		if claims.OrganisationID != nil {
+			orgID = *claims.OrganisationID
+		}
+		err = globalAuthConfig.UserValidator.ValidateUserActive(ctx, claims.UserID, orgID)
 		if err != nil {
 			return nil, fmt.Errorf("user validation failed: %w", err)
 		}
 	}
 	
-	if serviceClaims != nil {
-		// Validate service is still active in DB
-		err = globalAuthConfig.ServiceValidator.ValidateServiceActive(ctx, serviceClaims.ServiceName)
-		if err != nil {
-			return nil, fmt.Errorf("service validation failed: %w", err)
-		}
-	}
-	
 	// Build and return auth context
-	return buildAuthContext(userClaims, serviceClaims), nil
+	return buildAuthContext(claims), nil
 }
 
 // ExtractTokenFromHeader extracts Bearer token from Authorization header
@@ -132,28 +134,28 @@ func ValidateServicePermissions(ctx context.Context, authCtx *AuthContext, requi
 		return fmt.Errorf("service authentication required for permission validation")
 	}
 	
-	if authCtx.Service == nil {
-		return fmt.Errorf("invalid service context")
+	if authCtx.User == nil {
+		return fmt.Errorf("invalid authentication context")
 	}
 	
-	// Check if service has all required permissions
+	// Check if user/service has all required permissions
 	for _, requiredPerm := range requiredPermissions {
 		hasPermission := false
-		for _, servicePerm := range authCtx.Service.Permissions {
-			if servicePerm == requiredPerm {
+		for _, userPerm := range authCtx.User.Permissions {
+			if userPerm == requiredPerm {
 				hasPermission = true
 				break
 			}
 		}
 		if !hasPermission {
-			return fmt.Errorf("insufficient service permissions. Missing: %s", requiredPerm)
+			return fmt.Errorf("insufficient permissions. Missing: %s", requiredPerm)
 		}
 	}
 	
 	// Additional DB validation for service permissions (if needed)
 	if globalAuthConfig != nil && !globalAuthConfig.SkipDBValidation {
 		err := globalAuthConfig.ServiceValidator.ValidateServicePermissions(
-			ctx, authCtx.Service.ServiceName, requiredPermissions)
+			ctx, authCtx.User.UserID, requiredPermissions)
 		if err != nil {
 			return fmt.Errorf("service permission validation failed: %w", err)
 		}
@@ -162,32 +164,29 @@ func ValidateServicePermissions(ctx context.Context, authCtx *AuthContext, requi
 	return nil
 }
 
-// buildAuthContext creates AuthContext from claims (without DB validation)
-func buildAuthContext(userClaims *UserClaims, serviceClaims *ServiceClaims) *AuthContext {
-	if userClaims != nil {
-		return &AuthContext{
-			AuthType: "user",
-			User: &AuthUser{
-				UserID:         userClaims.UserID,
-				OrganisationID: userClaims.OrganisationID,
-				Username:       userClaims.Username,
-				Role:           userClaims.Role,
-			},
-		}
+// buildAuthContext creates AuthContext from claims (unified for users and services)
+func buildAuthContext(claims *UserClaims) *AuthContext {
+	if claims == nil {
+		return nil
 	}
 	
-	if serviceClaims != nil {
-		return &AuthContext{
-			AuthType: "service",
-			Service: &AuthService{
-				ServiceName: serviceClaims.ServiceName,
-				ServiceID:   serviceClaims.ServiceID,
-				Permissions: serviceClaims.Permissions,
-			},
-		}
+	// Determine auth type for backward compatibility
+	authType := "user"
+	if claims.UserType == "service" {
+		authType = "service"
 	}
 	
-	return nil
+	return &AuthContext{
+		AuthType: authType,
+		User: &AuthUser{
+			UserID:         claims.UserID,
+			OrganisationID: claims.OrganisationID,
+			Username:       claims.Username,
+			Role:           claims.Role,
+			UserType:       claims.UserType,
+			Permissions:    claims.Permissions,
+		},
+	}
 }
 
 // Convenience functions for common roles

@@ -229,9 +229,9 @@ func NewCachedServiceValidator(validator ServiceValidator, cache *ValidationCach
 }
 
 // ValidateServiceActive validates with caching
-func (v *CachedServiceValidator) ValidateServiceActive(ctx context.Context, serviceName string) error {
-	// Check cache first
-	if isActive, found := v.cache.GetServiceStatus(serviceName); found {
+func (v *CachedServiceValidator) ValidateServiceActive(ctx context.Context, userID string) error {
+	// Check cache first using userID
+	if isActive, found := v.cache.GetServiceStatus(userID); found {
 		if !isActive {
 			return fmt.Errorf("service account inactive")
 		}
@@ -239,15 +239,15 @@ func (v *CachedServiceValidator) ValidateServiceActive(ctx context.Context, serv
 	}
 	
 	// Cache miss - validate against DB
-	err := v.validator.ValidateServiceActive(ctx, serviceName)
+	err := v.validator.ValidateServiceActive(ctx, userID)
 	
-	// Cache the result
-	v.cache.SetServiceStatus(serviceName, err == nil)
+	// Cache the result using userID
+	v.cache.SetServiceStatus(userID, err == nil)
 	
 	return err
 }
 
 // ValidateServicePermissions delegates to underlying validator (no caching for permissions)
-func (v *CachedServiceValidator) ValidateServicePermissions(ctx context.Context, serviceName string, permissions []string) error {
-	return v.validator.ValidateServicePermissions(ctx, serviceName, permissions)
+func (v *CachedServiceValidator) ValidateServicePermissions(ctx context.Context, userID string, permissions []string) error {
+	return v.validator.ValidateServicePermissions(ctx, userID, permissions)
 }

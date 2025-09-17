@@ -82,13 +82,13 @@ func NewPostgresServiceValidator(db *pgxpool.Pool) *PostgresServiceValidator {
 	return &PostgresServiceValidator{db: db}
 }
 
-func (v *PostgresServiceValidator) ValidateServiceActive(ctx context.Context, serviceName string) error {
-	// Query service from database
+func (v *PostgresServiceValidator) ValidateServiceActive(ctx context.Context, userID string) error {
+	// Query service from database using ID (more secure)
 	var isActive bool
 	var userType string
 	
-	query := `SELECT is_active, user_type FROM user_org WHERE username = $1`
-	err := v.db.QueryRow(ctx, query, serviceName).Scan(&isActive, &userType)
+	query := `SELECT is_active, user_type FROM user_org WHERE id = $1`
+	err := v.db.QueryRow(ctx, query, userID).Scan(&isActive, &userType)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("service not found")
@@ -109,14 +109,14 @@ func (v *PostgresServiceValidator) ValidateServiceActive(ctx context.Context, se
 	return nil
 }
 
-func (v *PostgresServiceValidator) ValidateServicePermissions(ctx context.Context, serviceName string, permissions []string) error {
-	// Query service from database
+func (v *PostgresServiceValidator) ValidateServicePermissions(ctx context.Context, userID string, permissions []string) error {
+	// Query service from database using ID (more secure than username)
 	var isActive bool
 	var userType string
-	var servicePermissions []string
+	var userPermissions []string
 	
-	query := `SELECT is_active, user_type, service_permissions FROM user_org WHERE username = $1`
-	err := v.db.QueryRow(ctx, query, serviceName).Scan(&isActive, &userType, &servicePermissions)
+	query := `SELECT is_active, user_type, permissions FROM user_org WHERE id = $1`
+	err := v.db.QueryRow(ctx, query, userID).Scan(&isActive, &userType, &userPermissions)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("service not found")
@@ -137,8 +137,8 @@ func (v *PostgresServiceValidator) ValidateServicePermissions(ctx context.Contex
 	// Check each required permission
 	for _, requiredPerm := range permissions {
 		hasPermission := false
-		for _, servicePerm := range servicePermissions {
-			if servicePerm == requiredPerm {
+		for _, userPerm := range userPermissions {
+			if userPerm == requiredPerm {
 				hasPermission = true
 				break
 			}

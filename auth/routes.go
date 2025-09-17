@@ -66,15 +66,18 @@ func requireAuthMiddleware() fiber.Handler {
 		if authCtx.User != nil {
 			c.Locals("auth_type", "user")
 			c.Locals("user_id", authCtx.User.UserID)
-			c.Locals("org_id", authCtx.User.OrganisationID)
+			// Handle org_id pointer properly
+			if authCtx.User.OrganisationID != nil {
+				c.Locals("org_id", *authCtx.User.OrganisationID)
+			}
 			c.Locals("username", authCtx.User.Username)
 			c.Locals("role", authCtx.User.Role)
 		}
-		if authCtx.Service != nil {
+		if authCtx.AuthType == "service" && authCtx.User != nil {
 			c.Locals("auth_type", "service")
-			c.Locals("service_name", authCtx.Service.ServiceName)
-			c.Locals("service_id", authCtx.Service.ServiceID)
-			c.Locals("permissions", authCtx.Service.Permissions)
+			c.Locals("service_name", authCtx.User.Username)
+			c.Locals("service_id", authCtx.User.UserID)
+			c.Locals("permissions", authCtx.User.Permissions)
 		}
 
 		return c.Next()

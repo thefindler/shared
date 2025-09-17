@@ -12,11 +12,11 @@ type UserValidator interface {
 
 // ServiceValidator interface for validating services against database  
 type ServiceValidator interface {
-	// ValidateServiceActive checks if service exists and is active
-	ValidateServiceActive(ctx context.Context, serviceName string) error
+	// ValidateServiceActive checks if service exists and is active (using user ID for security)
+	ValidateServiceActive(ctx context.Context, userID string) error
 	
-	// ValidateServicePermissions checks if service has required permissions
-	ValidateServicePermissions(ctx context.Context, serviceName string, permissions []string) error
+	// ValidateServicePermissions checks if service has required permissions (using user ID for security)
+	ValidateServicePermissions(ctx context.Context, userID string, permissions []string) error
 }
 
 // AuthConfig holds configuration for the auth middleware
@@ -43,26 +43,20 @@ func DefaultCacheConfig() *CacheConfig {
 	}
 }
 
-// AuthUser represents authenticated user information
+// AuthUser represents authenticated user information (unified for users and services)
 type AuthUser struct {
-	UserID         string `json:"user_id"`
-	OrganisationID string `json:"organisation_id"`
-	Username       string `json:"username"`
-	Role           string `json:"role"`
+	UserID         string   `json:"user_id"`         // User UUID or Service UUID
+	OrganisationID *string  `json:"organisation_id"` // NULL for global services
+	Username       string   `json:"username"`        // Username or service name
+	Role           string   `json:"role"`            // 'admin', 'agent-manager', 'service'
+	UserType       string   `json:"user_type"`       // 'normal' or 'service'
+	Permissions    []string `json:"permissions"`     // Unified permissions
 }
 
-// AuthService represents authenticated service information
-type AuthService struct {
-	ServiceName string   `json:"service_name"`
-	ServiceID   string   `json:"service_id"`
-	Permissions []string `json:"permissions"`
-}
-
-// AuthContext represents the authentication context
+// AuthContext represents the authentication context (simplified)
 type AuthContext struct {
-	AuthType string       `json:"auth_type"` // "user" or "service"
-	User     *AuthUser    `json:"user,omitempty"`
-	Service  *AuthService `json:"service,omitempty"`
+	AuthType string    `json:"auth_type"` // "user" or "service" (for backward compatibility)
+	User     *AuthUser `json:"user"`      // Unified user/service information
 }
 
 // NoOpUserValidator provides a no-op implementation for testing
@@ -76,11 +70,11 @@ func (v *NoOpUserValidator) ValidateUserActive(ctx context.Context, userID, orgI
 // NoOpServiceValidator provides a no-op implementation for testing
 type NoOpServiceValidator struct{}
 
-func (v *NoOpServiceValidator) ValidateServiceActive(ctx context.Context, serviceName string) error {
+func (v *NoOpServiceValidator) ValidateServiceActive(ctx context.Context, userID string) error {
 	return nil // Always allow
 }
 
-func (v *NoOpServiceValidator) ValidateServicePermissions(ctx context.Context, serviceName string, permissions []string) error {
+func (v *NoOpServiceValidator) ValidateServicePermissions(ctx context.Context, userID string, permissions []string) error {
 	return nil // Always allow
 }
 

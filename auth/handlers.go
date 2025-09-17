@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v2"
@@ -34,26 +35,42 @@ type RefreshTokenRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required"`
 }
 
+// Legacy - for backward compatibility
 type CreateUserRequest struct {
-	Username string    `json:"username" validate:"required,min=3,max=255"`
-	Email    string    `json:"email" validate:"required,email"`
-	Password string    `json:"password" validate:"required,min=8"`
-	OrgID    uuid.UUID `json:"org_id" validate:"required"`
-	Role     string    `json:"role" validate:"required,oneof=admin agent-manager"`
+	Username string `json:"username" validate:"required,min=3,max=255"`
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8"`
+	Role     string `json:"role" validate:"required,oneof=admin agent-manager"`
+	// Note: org_id is automatically taken from admin's context for security
 }
 
 type CreateServiceUserRequest struct {
 	Username    string                 `json:"username" validate:"required,min=3,max=255"`
 	Permissions []string               `json:"permissions" validate:"required,min=1"`
+	OrgID       *string                `json:"org_id,omitempty"` // Optional - if not provided, uses admin's org_id
 	Metadata    map[string]interface{} `json:"metadata"`
+}
+
+// Unified user creation request - handles both normal and service users
+type CreateUnifiedUserRequest struct {
+	Username    string                 `json:"username" validate:"required,min=3,max=255"`
+	UserType    string                 `json:"user_type" validate:"required,oneof=normal service"`
+	// For normal users
+	Email       *string                `json:"email,omitempty" validate:"omitempty,email"`
+	Password    *string                `json:"password,omitempty" validate:"omitempty,min=8"`
+	Role        *string                `json:"role,omitempty" validate:"omitempty,oneof=admin agent-manager"`
+	// For service users
+	Permissions []string               `json:"permissions,omitempty"`
+	// Common fields
+	OrgID       *string                `json:"org_id,omitempty"` // Optional - if not provided, uses admin's org_id
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type LoginResponse struct {
 	User         UserResponse `json:"user"`
-	AccessToken  string       `json:"access_token"`
 	RefreshToken string       `json:"refresh_token"`
 	TokenType    string       `json:"token_type"`
-	ExpiresIn    int          `json:"expires_in"`
+	ExpiresIn    int          `json:"expires_in"` // Refresh token expiry
 }
 
 type UserResponse struct {
@@ -122,24 +139,28 @@ func (h *AuthHandlers) Login(c *fiber.Ctx) error {
 		})
 	}
 
-	// Create tokens
-	accessToken, err := CreateAccessToken(
-		user.ID.String(),
-		user.OrgID.String(),
-		user.Username,
-		user.Role,
-	)
+	// Create tokens with unified parameters
+	var orgID string
+	if user.OrgID != nil {
+		orgID = user.OrgID.String()
+	}
+	
+	// Get organization-specific TTL
+	_, refreshTTL, err := h.getOrganizationTTL(c.Context(), user.OrgID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to create access token",
+			"error": "Failed to get organization TTL",
 		})
 	}
-
+	
 	refreshToken, err := CreateRefreshToken(
 		user.ID.String(),
-		user.OrgID.String(),
+		orgID,
 		user.Username,
 		user.Role,
+		user.UserType,
+		user.Permissions,
+		refreshTTL,
 	)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -157,10 +178,9 @@ func (h *AuthHandlers) Login(c *fiber.Ctx) error {
 			UserType: user.UserType,
 			IsActive: user.IsActive,
 		},
-		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		TokenType:    "Bearer",
-		ExpiresIn:    int(GetJWTConfig().AccessTokenExpiry.Seconds()),
+		ExpiresIn:    int(refreshTTL.Seconds()), // Refresh token expiry
 	})
 }
 
@@ -181,7 +201,7 @@ func (h *AuthHandlers) RefreshToken(c *fiber.Ctx) error {
 	}
 
 	// Validate refresh token
-	userClaims, _, err := ValidateToken(req.RefreshToken)
+	userClaims, err := ValidateToken(req.RefreshToken)
 	if err != nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "Invalid refresh token",
@@ -209,11 +229,27 @@ func (h *AuthHandlers) RefreshToken(c *fiber.Ctx) error {
 	}
 
 	// Create new access token
+	var orgID string
+	if user.OrgID != nil {
+		orgID = user.OrgID.String()
+	}
+	
+	// Get organization-specific TTL
+	accessTTL, _, err := h.getOrganizationTTL(c.Context(), user.OrgID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to get organization TTL",
+		})
+	}
+	
 	accessToken, err := CreateAccessToken(
 		user.ID.String(),
-		user.OrgID.String(),
+		orgID,
 		user.Username,
 		user.Role,
+		user.UserType,
+		user.Permissions,
+		accessTTL,
 	)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -240,7 +276,7 @@ func (h *AuthHandlers) Logout(c *fiber.Ctx) error {
 
 	// For now, logout just validates the token exists
 	// In a more complex system, we might blacklist the token
-	_, _, err := ValidateToken(req.RefreshToken)
+	_, err := ValidateToken(req.RefreshToken)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid token",
@@ -304,6 +340,22 @@ func (h *AuthHandlers) CreateNormalUser(c *fiber.Ctx) error {
 		})
 	}
 
+	// Get organization ID from context (set by organization isolation middleware)
+	// This ensures admin can only create users in their own organization
+	orgID, ok := c.Locals("organization_id").(string)
+	if !ok {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "Organization context missing - admin must belong to an organization",
+		})
+	}
+
+	orgUUID, err := uuid.Parse(orgID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Invalid organization ID format",
+		})
+	}
+
 	// Hash password
 	hashedPassword, err := HashPassword(req.Password)
 	if err != nil {
@@ -312,8 +364,8 @@ func (h *AuthHandlers) CreateNormalUser(c *fiber.Ctx) error {
 		})
 	}
 
-	// Create user
-	user, err := h.createNormalUser(c.Context(), &req, hashedPassword, createdBy)
+	// Create user in admin's organization (security: prevents cross-org user creation)
+	user, err := h.createNormalUser(c.Context(), &req, orgUUID, hashedPassword, createdBy)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
@@ -373,20 +425,48 @@ func (h *AuthHandlers) CreateServiceUser(c *fiber.Ctx) error {
 		})
 	}
 
-	// Create service user
-	user, err := h.createServiceUser(c.Context(), &req, createdBy)
+	// Get admin's org_id from context (for service user assignment)
+	var adminOrgID *uuid.UUID
+	if orgID := c.Locals("org_id"); orgID != nil {
+		if orgIDStr, ok := orgID.(string); ok {
+			if parsedID, err := uuid.Parse(orgIDStr); err == nil {
+				adminOrgID = &parsedID
+			}
+		}
+	}
+	
+	// If org_id not provided in request, use admin's org_id
+	var serviceOrgID *uuid.UUID
+	if req.OrgID != nil && *req.OrgID != "" {
+		if parsedID, err := uuid.Parse(*req.OrgID); err == nil {
+			serviceOrgID = &parsedID
+		}
+	} else {
+		serviceOrgID = adminOrgID
+	}
+
+	// Create service user with organization ID
+	user, err := h.createServiceUser(c.Context(), &req, serviceOrgID, createdBy)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
 
-	// Create service token (1 year expiry)
+	// Get organization-specific TTL for service token
+	_, refreshTTL, err := h.getOrganizationTTL(c.Context(), serviceOrgID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to get organization TTL",
+		})
+	}
+
+	// Create service token with organization-specific TTL
 	serviceToken, err := CreateServiceToken(
 		user.Username,
 		user.ID.String(),
 		req.Permissions,
-		GetJWTConfig().RefreshTokenExpiry, // 1 year
+		refreshTTL,
 	)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -399,7 +479,7 @@ func (h *AuthHandlers) CreateServiceUser(c *fiber.Ctx) error {
 		"service_token": ServiceTokenResponse{
 			Token:     serviceToken,
 			TokenType: "Bearer",
-			ExpiresIn: int(GetJWTConfig().RefreshTokenExpiry.Seconds()),
+			ExpiresIn: int(refreshTTL.Seconds()),
 			Note:      "Store this service token securely. It will not be shown again.",
 		},
 	})
@@ -452,13 +532,13 @@ type UserDB struct {
 func (h *AuthHandlers) getUserByUsername(ctx context.Context, username string) (*UserDB, error) {
 	var user UserDB
 	query := `
-		SELECT id, username, email, password_hash, org_id, role, user_type, is_active
+		SELECT id, username, email, password_hash, org_id, role, user_type, permissions, is_active
 		FROM user_org 
 		WHERE username = $1 AND is_active = true`
 
 	err := h.db.QueryRow(ctx, query, username).Scan(
 		&user.ID, &user.Username, &user.Email, &user.PasswordHash,
-		&user.OrgID, &user.Role, &user.UserType, &user.IsActive,
+		&user.OrgID, &user.Role, &user.UserType, &user.Permissions, &user.IsActive,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("user not found: %s", username)
@@ -475,13 +555,13 @@ func (h *AuthHandlers) getUserByID(ctx context.Context, userID string) (*UserDB,
 	}
 
 	query := `
-		SELECT id, username, email, password_hash, org_id, role, user_type, is_active
+		SELECT id, username, email, password_hash, org_id, role, user_type, permissions, is_active
 		FROM user_org 
 		WHERE id = $1 AND is_active = true`
 
 	err = h.db.QueryRow(ctx, query, parsedID).Scan(
 		&user.ID, &user.Username, &user.Email, &user.PasswordHash,
-		&user.OrgID, &user.Role, &user.UserType, &user.IsActive,
+		&user.OrgID, &user.Role, &user.UserType, &user.Permissions, &user.IsActive,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("user not found: %s", userID)
@@ -504,13 +584,13 @@ func (h *AuthHandlers) existsByEmail(ctx context.Context, email string) (bool, e
 	return exists, err
 }
 
-func (h *AuthHandlers) createNormalUser(ctx context.Context, req *CreateUserRequest, hashedPassword string, createdBy *uuid.UUID) (*UserDB, error) {
+func (h *AuthHandlers) createNormalUser(ctx context.Context, req *CreateUserRequest, orgID uuid.UUID, hashedPassword string, createdBy *uuid.UUID) (*UserDB, error) {
 	user := &UserDB{
 		ID:           uuid.New(),
 		Username:     req.Username,
 		Email:        &req.Email,
 		PasswordHash: &hashedPassword,
-		OrgID:        &req.OrgID,
+		OrgID:        &orgID,
 		Role:         req.Role,
 		UserType:     "normal",
 		IsActive:     true,
@@ -532,10 +612,11 @@ func (h *AuthHandlers) createNormalUser(ctx context.Context, req *CreateUserRequ
 	return user, nil
 }
 
-func (h *AuthHandlers) createServiceUser(ctx context.Context, req *CreateServiceUserRequest, createdBy *uuid.UUID) (*UserDB, error) {
+func (h *AuthHandlers) createServiceUser(ctx context.Context, req *CreateServiceUserRequest, orgID *uuid.UUID, createdBy *uuid.UUID) (*UserDB, error) {
 	user := &UserDB{
 		ID:          uuid.New(),
 		Username:    req.Username,
+		OrgID:       orgID, // Set organization ID
 		Role:        "service",
 		UserType:    "service",
 		IsActive:    true,
@@ -548,12 +629,12 @@ func (h *AuthHandlers) createServiceUser(ctx context.Context, req *CreateService
 	}
 
 	query := `
-		INSERT INTO user_org (id, username, role, user_type, service_permissions, service_metadata, is_active)
+		INSERT INTO user_org (id, username, org_id, role, user_type, permissions, is_active)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`
 
 	_, err := h.db.Exec(ctx, query,
-		user.ID, user.Username, user.Role, user.UserType,
-		user.Permissions, user.Metadata, user.IsActive,
+		user.ID, user.Username, user.OrgID, user.Role, user.UserType,
+		user.Permissions, user.IsActive,
 	)
 
 	if err != nil {
@@ -561,4 +642,26 @@ func (h *AuthHandlers) createServiceUser(ctx context.Context, req *CreateService
 	}
 
 	return user, nil
+}
+
+// getOrganizationTTL retrieves TTL values from organization table
+func (h *AuthHandlers) getOrganizationTTL(ctx context.Context, orgID *uuid.UUID) (accessTTL, refreshTTL time.Duration, err error) {
+	// Default TTL for global services (no organization)
+	if orgID == nil {
+		return 4 * time.Hour, 8760 * time.Hour, nil // 4 hours access, 1 year refresh
+	}
+	
+	var accessHours, refreshHours int
+	query := `
+		SELECT access_token_ttl_hours, refresh_token_ttl_hours 
+		FROM organisation 
+		WHERE id = $1`
+	
+	err = h.db.QueryRow(ctx, query, orgID).Scan(&accessHours, &refreshHours)
+	if err != nil {
+		// If organization not found, use defaults
+		return 4 * time.Hour, 8760 * time.Hour, nil
+	}
+	
+	return time.Duration(accessHours) * time.Hour, time.Duration(refreshHours) * time.Hour, nil
 }
