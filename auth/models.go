@@ -51,7 +51,6 @@ type AuthContext struct {
 type OrgConfig struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
-	JWTSecret       string
 }
 
 
@@ -60,8 +59,6 @@ type DB interface {
 	GetUserByUsername(ctx context.Context, username string) (*User, error)
 	GetUserByID(ctx context.Context, userID string) (*User, error)
 	CreateUser(ctx context.Context, user *User) error
-	IsTokenDenied(ctx context.Context, jti string) (bool, error)
-	DenyToken(ctx context.Context, jti string, expiresAt time.Time) error
 	GetOrgConfig(ctx context.Context, orgID *string) (*OrgConfig, error)
 }
 

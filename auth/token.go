@@ -42,13 +42,13 @@ func (s *TokenService) GenerateToken(claims UserClaims, ttl time.Duration) (stri
 	return token.SignedString(s.secretKey)
 }
 
-// ValidateToken parses and validates a token string with a dynamic secret.
-func (s *TokenService) ValidateToken(tokenString string, secretKey []byte) (*UserClaims, error) {
+// ValidateToken parses and validates a token string using the service's configured secret key.
+func (s *TokenService) ValidateToken(tokenString string) (*UserClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return secretKey, nil
+		return s.secretKey, nil
 	})
 
 	if err != nil {
@@ -60,21 +60,4 @@ func (s *TokenService) ValidateToken(tokenString string, secretKey []byte) (*Use
 	}
 
 	return nil, ErrInvalidToken
-}
-
-// ParseUnverified parses a token without verifying its signature.
-// This is useful for reading claims like OrganisationID before validation.
-func (s *TokenService) ParseUnverified(tokenString string) (*UserClaims, error) {
-	parser := new(jwt.Parser)
-	token, _, err := parser.ParseUnverified(tokenString, &UserClaims{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse token unverified: %w", err)
-	}
-
-	claims, ok := token.Claims.(*UserClaims)
-	if !ok {
-		return nil, fmt.Errorf("invalid token claims")
-	}
-
-	return claims, nil
 }

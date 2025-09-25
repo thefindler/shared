@@ -68,20 +68,6 @@ func (h *AuthHandler) RefreshHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *AuthHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		RefreshToken string `json:"refresh_token"`
-	}
-
-	// It's okay if decoding fails or token is not provided.
-	json.NewDecoder(r.Body).Decode(&req)
-
-	// Logout is best-effort and shouldn't fail for the client.
-	h.service.Logout(r.Context(), req.RefreshToken)
-
-	w.WriteHeader(http.StatusOK)
-}
-
 // CreateUserHandler handles new user creation. This is a protected endpoint.
 func (h *AuthHandler) CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 	// Authorization is now handled by the middleware that wraps this handler in the router.
@@ -108,28 +94,4 @@ func (h *AuthHandler) CreateUserHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.WriteHeader(http.StatusCreated)
-}
-
-// HTTPMiddleware is a convenience function to adapt the MiddlewareService for http.Handler.
-func HTTPMiddleware(ms *MiddlewareService) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get("Authorization")
-
-			// The Authenticate method returns a new context with auth info.
-			ctx, err := ms.Authenticate(r.Context(), authHeader)
-			if err != nil {
-				authErr, ok := err.(*AuthError)
-				if ok {
-					http.Error(w, authErr.Message, authErr.Code)
-				} else {
-					http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				}
-				return
-			}
-
-			// Replace the request's context and proceed.
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
-	}
 }

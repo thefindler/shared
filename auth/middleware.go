@@ -39,29 +39,17 @@ func (s *MiddlewareService) Authenticate(ctx context.Context, authHeader string)
 	}
 	tokenString := parts[1]
 
-	// 1. Parse token unverified to get OrganisationID
-	unverifiedClaims, err := s.tokenService.ParseUnverified(tokenString)
-	if err != nil {
-		return nil, ErrInvalidToken
-	}
-
-	// 2. Get org-specific config/secret from DB
-	orgConfig, err := s.db.GetOrgConfig(ctx, unverifiedClaims.OrganisationID)
-	if err != nil {
-		return nil, NewAuthError("CONFIG_ERROR", "Could not load configuration for user", 500)
-	}
-
-	// 3. Validate the token with the correct secret
-	claims, err := s.tokenService.ValidateToken(tokenString, []byte(orgConfig.JWTSecret))
+	// 1. Validate the token with the global secret
+	claims, err := s.tokenService.ValidateToken(tokenString)
 	if err != nil {
 		return nil, err // ValidateToken returns ErrInvalidToken
 	}
-	
+
 	if claims.TokenType != AccessToken {
 		return nil, NewAuthError("INVALID_TOKEN_TYPE", "Access token required", 401)
 	}
 
-	// 4. Perform DB validation to ensure user/service is still active
+	// 2. Perform DB validation to ensure user/service is still active
 	if claims.UserType == "service" {
 		if err := s.db.ValidateServiceActive(ctx, claims.UserID); err != nil {
 			return nil, err

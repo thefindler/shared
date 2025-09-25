@@ -87,23 +87,6 @@ func (p *PostgresDB) GetOrgConfig(ctx context.Context, orgID *string) (*OrgConfi
 	}, nil
 }
 
-// IsTokenDenied checks if a token JTI is in the blacklist
-func (p *PostgresDB) IsTokenDenied(ctx context.Context, jti string) (bool, error) {
-	var count int
-	err := p.pool.QueryRow(ctx, 
-		"SELECT COUNT(*) FROM denied_tokens WHERE jti = $1 AND expires_at > NOW()", 
-		jti).Scan(&count)
-	return count > 0, err
-}
-
-// DenyToken adds a token JTI to the blacklist
-func (p *PostgresDB) DenyToken(ctx context.Context, jti string, expiresAt time.Time) error {
-	_, err := p.pool.Exec(ctx, 
-		"INSERT INTO denied_tokens (jti, expires_at) VALUES ($1, $2) ON CONFLICT (jti) DO NOTHING", 
-		jti, expiresAt)
-	return err
-}
-
 // ValidateUserActive checks if a user is present and active in the database.
 func (p *PostgresDB) ValidateUserActive(ctx context.Context, userID string, orgID string) error {
 	user, err := p.GetUserByID(ctx, userID)

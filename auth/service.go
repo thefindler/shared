@@ -61,20 +61,8 @@ func (s *AuthService) Login(ctx context.Context, username, password string) (str
 
 // Refresh generates a new access token from a valid refresh token.
 func (s *AuthService) Refresh(ctx context.Context, refreshTokenString string) (string, error) {
-	// 1. Parse token unverified to get OrganisationID
-	claims, err := s.tokenService.ParseUnverified(refreshTokenString)
-	if err != nil {
-		return "", ErrInvalidToken
-	}
-
-	// 2. Get org-specific config/secret
-	orgConfig, err := s.db.GetOrgConfig(ctx, claims.OrganisationID)
-	if err != nil {
-		return "", fmt.Errorf("could not find organisation for token: %w", err)
-	}
-
-	// 3. Validate token with the correct secret
-	validatedClaims, err := s.tokenService.ValidateToken(refreshTokenString, []byte(orgConfig.JWTSecret))
+	// 1. Validate token with the global secret
+	validatedClaims, err := s.tokenService.ValidateToken(refreshTokenString)
 	if err != nil {
 		return "", err
 	}
@@ -83,18 +71,19 @@ func (s *AuthService) Refresh(ctx context.Context, refreshTokenString string) (s
 		return "", NewAuthError("INVALID_TOKEN_TYPE", "Refresh token required", 401)
 	}
 
-	// 4. Check if token is denied (logged out)
-	if denied, _ := s.db.IsTokenDenied(ctx, validatedClaims.ID); denied {
-		return "", NewAuthError("TOKEN_REVOKED", "Token has been revoked", 401)
-	}
-
-	// 5. Get fresh user data to ensure user is still active
+	// 2. Get fresh user data to ensure user is still active
 	user, err := s.db.GetUserByID(ctx, validatedClaims.UserID)
 	if err != nil || !user.IsActive {
 		return "", ErrUserInactive
 	}
 
-	// 6. Generate a new access token
+	// 3. Get org-specific config for the new token's TTL
+	orgConfig, err := s.db.GetOrgConfig(ctx, validatedClaims.OrganisationID)
+	if err != nil {
+		return "", fmt.Errorf("could not find organisation for token: %w", err)
+	}
+
+	// 4. Generate a new access token
 	accessClaims := s.createUserClaims(user, AccessToken)
 	accessToken, err := s.tokenService.GenerateToken(accessClaims, orgConfig.AccessTokenTTL)
 	if err != nil {
@@ -102,17 +91,6 @@ func (s *AuthService) Refresh(ctx context.Context, refreshTokenString string) (s
 	}
 
 	return accessToken, nil
-}
-
-// Logout revokes a refresh token by adding its JTI to a denylist.
-func (s *AuthService) Logout(ctx context.Context, refreshTokenString string) error {
-	claims, err := s.tokenService.ParseUnverified(refreshTokenString)
-	if err != nil {
-		// Don't return error for invalid tokens, just fail silently.
-		return nil
-	}
-	// Deny token until its natural expiry time
-	return s.db.DenyToken(ctx, claims.ID, claims.ExpiresAt.Time)
 }
 
 // CreateUser creates a new user account.
