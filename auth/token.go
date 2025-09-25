@@ -27,7 +27,7 @@ func NewTokenService(secretKey, issuer string) (*TokenService, error) {
 }
 
 // GenerateToken creates a new JWT with the given claims and TTL.
-func (s *TokenService) GenerateToken(claims UserClaims, ttl time.Duration) (string, error) {
+func (s *TokenService) GenerateToken(claims Claims, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims.RegisteredClaims = jwt.RegisteredClaims{
 		ID:        uuid.NewString(),
@@ -43,8 +43,8 @@ func (s *TokenService) GenerateToken(claims UserClaims, ttl time.Duration) (stri
 }
 
 // ValidateToken parses and validates a token string using the service's configured secret key.
-func (s *TokenService) ValidateToken(tokenString string) (*UserClaims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
+func (s *TokenService) ValidateToken(tokenString string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
@@ -55,7 +55,7 @@ func (s *TokenService) ValidateToken(tokenString string) (*UserClaims, error) {
 		return nil, ErrInvalidToken // Use predefined error
 	}
 
-	if claims, ok := token.Claims.(*UserClaims); ok && token.Valid {
+	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
 		return claims, nil
 	}
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"findler.com/shared/config"
+	"findler/shared/config"
 )
 
 // JWTConfig holds JWT configuration
@@ -35,10 +35,3 @@ func GetJWTConfig() *JWTConfig {
 	return jwtConfig
 }
 
-// parseDuration parses duration string with fallback
-func parseDuration(durationStr string, fallback time.Duration) (time.Duration, error) {
-	if durationStr == "" {
-		return fallback, nil
-	}
-	return time.ParseDuration(durationStr)
-}

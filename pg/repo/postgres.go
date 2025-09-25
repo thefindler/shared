@@ -1,7 +1,12 @@
+package repo
+
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
+
+	"shared/pg/model"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/lib/pq"
 )
@@ -14,8 +19,8 @@ func NewPostgresDB(pool *pgxpool.Pool) *PostgresDB {
 	return &PostgresDB{pool: pool}
 }
 
-func (p *PostgresDB) GetUserByUsername(ctx context.Context, username string) (*User, error) {
-	user := &User{}
+func (p *PostgresDB) GetUserByUsername(ctx context.Context, username string) (*model.UserOrg, error) {
+	user := &model.UserOrg{}
 	query := `
 		SELECT id, organisation_id, username, role, user_type, permissions, password_hash, is_active
 		FROM user_org WHERE username = $1`
@@ -31,8 +36,8 @@ func (p *PostgresDB) GetUserByUsername(ctx context.Context, username string) (*U
 	return user, err
 }
 
-func (p *PostgresDB) GetUserByID(ctx context.Context, userID string) (*User, error) {
-	user := &User{}
+func (p *PostgresDB) GetUserByID(ctx context.Context, userID string) (*model.UserOrg, error) {
+	user := &model.UserOrg{}
 	query := `
 		SELECT id, organisation_id, username, role, user_type, permissions, password_hash, is_active
 		FROM user_org WHERE id = $1`
@@ -48,22 +53,22 @@ func (p *PostgresDB) GetUserByID(ctx context.Context, userID string) (*User, err
 	return user, err
 }
 
-func (p *PostgresDB) CreateUser(ctx context.Context, user *User) error {
+func (p *PostgresDB) CreateUser(ctx context.Context, user *model.UserOrg) error {
 	query := `
 		INSERT INTO user_org (id, organisation_id, username, role, user_type, permissions, password_hash, is_active)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	_, err := p.pool.Exec(ctx, query,
 		user.ID, user.OrganisationID, user.Username, user.Role,
-		user.UserType, pq.Array(user.Permissions), user.PasswordHash, user.IsActive,
+		user.UserType, pq.Array(&user.Permissions), user.PasswordHash, user.IsActive,
 	)
 	return err
 }
 
 // GetOrgConfig gets organization-specific auth settings
-func (p *PostgresDB) GetOrgConfig(ctx context.Context, orgID *string) (*OrgConfig, error) {
+func (p *PostgresDB) GetOrgConfig(ctx context.Context, orgID *string) (*model.OrgConfig, error) {
 	// Default config for global users (no org)
-	defaultConfig := &OrgConfig{
+	defaultConfig := &model.OrgConfig{
 		AccessTokenTTL:  4 * time.Hour,
 		RefreshTokenTTL: 365 * 24 * time.Hour, // 365 days
 	}
@@ -81,7 +86,7 @@ func (p *PostgresDB) GetOrgConfig(ctx context.Context, orgID *string) (*OrgConfi
 		return defaultConfig, nil
 	}
 
-	return &OrgConfig{
+	return &model.OrgConfig{
 		AccessTokenTTL:  time.Duration(accessHours) * time.Hour,
 		RefreshTokenTTL: time.Duration(refreshHours) * time.Hour,
 	}, nil
@@ -91,10 +96,10 @@ func (p *PostgresDB) GetOrgConfig(ctx context.Context, orgID *string) (*OrgConfi
 func (p *PostgresDB) ValidateUserActive(ctx context.Context, userID string, orgID string) error {
 	user, err := p.GetUserByID(ctx, userID)
 	if err != nil {
-		return ErrUserInactive // Assuming not found means inactive for this purpose
+		return fmt.Errorf("user not found for validation")
 	}
 	if !user.IsActive {
-		return ErrUserInactive
+		return fmt.Errorf("user is inactive")
 	}
 	// Optionally, you could also validate if user.OrganisationID matches orgID
 	return nil
@@ -105,10 +110,10 @@ func (p *PostgresDB) ValidateServiceActive(ctx context.Context, serviceID string
 	// Assuming services are also stored in the user_org table with a specific user_type
 	service, err := p.GetUserByID(ctx, serviceID)
 	if err != nil {
-		return ErrServiceInactive
+		return fmt.Errorf("service account not found for validation")
 	}
 	if !service.IsActive || service.UserType != "service" {
-		return ErrServiceInactive
+		return fmt.Errorf("service account is inactive")
 	}
 	return nil
 }

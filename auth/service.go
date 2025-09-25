@@ -4,18 +4,18 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/golang-jwt/jwt/v5"
+	"shared/pg/model"
 	"github.com/google/uuid"
 )
 
 // AuthService provides core authentication logic.
 type AuthService struct {
-	db           DB
+	db           model.DB
 	tokenService *TokenService
 }
 
 // NewAuthService creates a new authentication service.
-func NewAuthService(db DB, ts *TokenService) *AuthService {
+func NewAuthService(db model.DB, ts *TokenService) *AuthService {
 	return &AuthService{
 		db:           db,
 		tokenService: ts,
@@ -100,7 +100,7 @@ func (s *AuthService) CreateUser(ctx context.Context, username, password, role, 
 		return fmt.Errorf("could not hash password: %w", err)
 	}
 
-	user := &User{
+	user := &model.UserOrg{
 		ID:             uuid.NewString(),
 		OrganisationID: orgID,
 		Username:       username,
@@ -115,8 +115,8 @@ func (s *AuthService) CreateUser(ctx context.Context, username, password, role, 
 }
 
 // createUserClaims is a helper to create the UserClaims struct from a User object.
-func (s *AuthService) createUserClaims(user *User, tokenType TokenType) UserClaims {
-	return UserClaims{
+func (s *AuthService) createUserClaims(user *model.UserOrg, tokenType TokenType) Claims {
+	return Claims{
 		UserID:         user.ID,
 		OrganisationID: user.OrganisationID,
 		Username:       user.Username,

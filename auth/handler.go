@@ -1,7 +1,10 @@
+package auth
+
 import (
 	"context"
 	"encoding/json"
-	"net/http"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 // AuthHandler wraps the AuthService to provide HTTP handlers.
@@ -14,65 +17,55 @@ func NewAuthHandler(service *AuthService) *AuthHandler {
 	return &AuthHandler{service: service}
 }
 
-func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
+func (h *AuthHandler) LoginHandler(c *fiber.Ctx) error {
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
 
-	access, refresh, err := h.service.Login(r.Context(), req.Username, req.Password)
+	access, refresh, err := h.service.Login(c.Context(), req.Username, req.Password)
 	if err != nil {
-		authErr, ok := err.(*AuthError)
-		if ok {
-			http.Error(w, authErr.Message, authErr.Code)
-		} else {
-			http.Error(w, "Login failed", http.StatusUnauthorized)
+		if authErr, ok := err.(*AuthError); ok {
+			return c.Status(authErr.Code).JSON(fiber.Map{"error": authErr.Message})
 		}
-		return
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Login failed"})
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{
+	return c.JSON(fiber.Map{
 		"access_token":  access,
 		"refresh_token": refresh,
 	})
 }
 
-func (h *AuthHandler) RefreshHandler(w http.ResponseWriter, r *http.Request) {
+func (h *AuthHandler) RefreshHandler(c *fiber.Ctx) error {
 	var req struct {
 		RefreshToken string `json:"refresh_token"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
 
-	token, err := h.service.Refresh(r.Context(), req.RefreshToken)
+	token, err := h.service.Refresh(c.Context(), req.RefreshToken)
 	if err != nil {
-		authErr, ok := err.(*AuthError)
-		if ok {
-			http.Error(w, authErr.Message, authErr.Code)
-		} else {
-			http.Error(w, "Failed to refresh token", http.StatusUnauthorized)
+		if authErr, ok := err.(*AuthError); ok {
+			return c.Status(authErr.Code).JSON(fiber.Map{"error": authErr.Message})
 		}
-		return
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Failed to refresh token"})
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{
+	return c.JSON(fiber.Map{
 		"access_token": token,
 	})
 }
 
 // CreateUserHandler handles new user creation. This is a protected endpoint.
-func (h *AuthHandler) CreateUserHandler(w http.ResponseWriter, r *http.Request) {
-	// Authorization is now handled by the middleware that wraps this handler in the router.
-	// No explicit authorization check is needed here.
-
+func (h *AuthHandler) CreateUserHandler(c *fiber.Ctx) error {
+	// Authorization is now handled by the middleware that wraps this handler.
 	var req struct {
 		Username    string   `json:"username"`
 		Password    string   `json:"password"`
@@ -82,16 +75,14 @@ func (h *AuthHandler) CreateUserHandler(w http.ResponseWriter, r *http.Request) 
 		Permissions []string `json:"permissions"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
 
-	err := h.service.CreateUser(r.Context(), req.Username, req.Password, req.Role, req.UserType, req.OrgID, req.Permissions)
+	err := h.service.CreateUser(c.Context(), req.Username, req.Password, req.Role, req.UserType, req.OrgID, req.Permissions)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	return c.SendStatus(fiber.StatusCreated)
 }

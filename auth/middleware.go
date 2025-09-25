@@ -5,6 +5,9 @@ import (
 	"context"
 	"strings"
 	"net/http"
+
+	"shared/pg/model"
+	"github.com/gofiber/fiber/v2"
 )
 
 // ContextKey is a custom type for context keys to avoid collisions.
@@ -15,11 +18,11 @@ const AuthContextKey ContextKey = "authContext"
 // MiddlewareService provides the authentication and authorization middleware.
 type MiddlewareService struct {
 	tokenService *TokenService
-	db           DB // Direct DB access for org-specific secrets
+	db           model.DB // Direct DB access for org-specific secrets
 }
 
 // NewMiddlewareService creates a new middleware service.
-func NewMiddlewareService(ts *TokenService, db DB) *MiddlewareService {
+func NewMiddlewareService(ts *TokenService, db model.DB) *MiddlewareService {
 	return &MiddlewareService{
 		tokenService: ts,
 		db:           db,
@@ -28,7 +31,8 @@ func NewMiddlewareService(ts *TokenService, db DB) *MiddlewareService {
 
 // Authenticate is the core middleware logic. It validates the token,
 // checks the database, and injects the AuthContext into the request context.
-func (s *MiddlewareService) Authenticate(ctx context.Context, authHeader string) (context.Context, error) {
+func (s *MiddlewareService) Authenticate(c *fiber.Ctx) (*AuthContext, error) {
+	authHeader := c.Get("Authorization")
 	if authHeader == "" {
 		return nil, ErrMissingToken
 	}
@@ -50,9 +54,10 @@ func (s *MiddlewareService) Authenticate(ctx context.Context, authHeader string)
 	}
 
 	// 2. Perform DB validation to ensure user/service is still active
+	ctx := c.Context() // Use the Fiber context
 	if claims.UserType == "service" {
 		if err := s.db.ValidateServiceActive(ctx, claims.UserID); err != nil {
-			return nil, err
+			return nil, ErrServiceInactive
 		}
 	} else {
 		orgIDStr := ""
@@ -60,11 +65,11 @@ func (s *MiddlewareService) Authenticate(ctx context.Context, authHeader string)
 			orgIDStr = *claims.OrganisationID
 		}
 		if err := s.db.ValidateUserActive(ctx, claims.UserID, orgIDStr); err != nil {
-			return nil, err
+			return nil, ErrUserInactive
 		}
 	}
 
-	// 5. Create and inject AuthContext
+	// 5. Create and return AuthContext
 	authCtx := &AuthContext{
 		UserID:         claims.UserID,
 		OrganisationID: claims.OrganisationID,
@@ -74,64 +79,59 @@ func (s *MiddlewareService) Authenticate(ctx context.Context, authHeader string)
 		Permissions:    claims.Permissions,
 	}
 
-	// Return a new context with the value
-	return context.WithValue(ctx, AuthContextKey, authCtx), nil
+	return authCtx, nil
 }
 
-// Middleware is a factory for creating a new HTTP middleware that enforces
+// Middleware is a factory for creating a new Fiber middleware that enforces
 // a specific authorization requirement.
-func (s *MiddlewareService) Middleware(requirement *AuthRequirement) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// 1. Authentication
-			authHeader := r.Header.Get("Authorization")
-			ctx, err := s.Authenticate(r.Context(), authHeader)
-			if err != nil {
-				handleAuthError(w, err)
-				return
-			}
+func (s *MiddlewareService) Middleware(requirement *AuthRequirement) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// 1. Authentication
+		authCtx, err := s.Authenticate(c)
+		if err != nil {
+			return handleAuthError(c, err)
+		}
 
-			// 2. Authorization
-			if requirement != nil {
-				// Role check
-				if len(requirement.RequiredRoles) > 0 {
-					if err := AuthorizeRole(ctx, requirement.RequiredRoles); err != nil {
-						handleAuthError(w, err)
-						return
-					}
-				}
+		// Store AuthContext in Fiber's locals
+		c.Locals(string(AuthContextKey), authCtx)
 
-				// Permission check
-				if len(requirement.RequiredPermissions) > 0 {
-					if err := AuthorizePermission(ctx, requirement.RequiredPermissions); err != nil {
-						handleAuthError(w, err)
-						return
-					}
+		// 2. Authorization
+		if requirement != nil {
+			// Role check
+			if len(requirement.RequiredRoles) > 0 {
+				if err := AuthorizeRole(c, requirement.RequiredRoles); err != nil {
+					return handleAuthError(c, err)
 				}
 			}
 
-			// If all checks pass, proceed with the original handler
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
+			// Permission check
+			if len(requirement.RequiredPermissions) > 0 {
+				if err := AuthorizePermission(c, requirement.RequiredPermissions); err != nil {
+					return handleAuthError(c, err)
+				}
+			}
+		}
+
+		// If all checks pass, proceed.
+		return c.Next()
 	}
 }
 
-// handleAuthError is a helper to write a structured auth error to the response.
-func handleAuthError(w http.ResponseWriter, err error) {
+// handleAuthError is a helper to write a structured auth error to the Fiber response.
+func handleAuthError(c *fiber.Ctx, err error) error {
 	if authErr, ok := err.(*AuthError); ok {
-		http.Error(w, authErr.Message, authErr.Code)
-	} else {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return c.Status(authErr.Code).JSON(fiber.Map{"error": authErr.Message})
 	}
+	return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
 }
 
 // --- Authorization Helpers ---
 
 // AuthorizeRole checks if the user in the context has one of the required roles.
-func AuthorizeRole(ctx context.Context, allowedRoles []string) error {
-	authCtx, ok := ctx.Value(AuthContextKey).(*AuthContext)
+func AuthorizeRole(c *fiber.Ctx, allowedRoles []string) error {
+	authCtx, ok := c.Locals(string(AuthContextKey)).(*AuthContext)
 	if !ok {
-		return ErrMissingToken // Or a more specific "context missing" error
+		return ErrMissingToken
 	}
 
 	for _, role := range allowedRoles {
@@ -144,8 +144,8 @@ func AuthorizeRole(ctx context.Context, allowedRoles []string) error {
 }
 
 // AuthorizePermission checks if a service user has all required permissions.
-func AuthorizePermission(ctx context.Context, requiredPerms []string) error {
-    authCtx, ok := ctx.Value(AuthContextKey).(*AuthContext)
+func AuthorizePermission(c *fiber.Ctx, requiredPerms []string) error {
+    authCtx, ok := c.Locals(string(AuthContextKey)).(*AuthContext)
 	if !ok || authCtx.UserType != "service" {
 		return ErrInsufficientPerms
 	}

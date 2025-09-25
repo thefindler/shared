@@ -44,9 +44,9 @@ findler-shared/
 
 ```go
 import (
-    "findler.com/shared/config"
-    "findler.com/shared/auth"
-    "findler.com/shared/logger"
+    "shared/config"
+    "shared/auth"
+    "shared/logger"
 )
 
 func main() {
@@ -78,7 +78,7 @@ func main() {
 ### Fiber Integration
 
 ```go
-import "findler.com/shared/auth/fiber"
+import "shared/auth/fiber"
 
 app := fiber.New()
 app.Use(fiber_auth.JWTMiddleware(fiber_auth.Config{
