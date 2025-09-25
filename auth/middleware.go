@@ -1,221 +1,179 @@
+// auth/middleware.go
 package auth
 
 import (
 	"context"
-	"fmt"
 	"strings"
+	"net/http"
 )
 
-// Global auth configuration
-var (
-	globalAuthConfig *AuthConfig
-	globalCache      *ValidationCache
-)
+// ContextKey is a custom type for context keys to avoid collisions.
+type ContextKey string
 
-// Initialize sets up the global auth configuration
-func Initialize(config AuthConfig) error {
-	if config.UserValidator == nil {
-		return fmt.Errorf("UserValidator is required")
-	}
-	if config.ServiceValidator == nil {
-		return fmt.Errorf("ServiceValidator is required")
-	}
-	
-	// Set up caching if not disabled
-	if config.CacheConfig == nil {
-		config.CacheConfig = DefaultCacheConfig()
-	}
-	
-	// Create cache
-	globalCache = NewValidationCache(config.CacheConfig)
-	
-	// Wrap validators with caching if not disabled
-	if !config.SkipDBValidation {
-		config.UserValidator = NewCachedUserValidator(config.UserValidator, globalCache)
-		config.ServiceValidator = NewCachedServiceValidator(config.ServiceValidator, globalCache)
-	}
-	
-	globalAuthConfig = &config
-	return nil
+const AuthContextKey ContextKey = "authContext"
+
+// MiddlewareService provides the authentication and authorization middleware.
+type MiddlewareService struct {
+	tokenService *TokenService
+	db           DB // Direct DB access for org-specific secrets
 }
 
-// GetAuthConfig returns the global auth configuration
-func GetAuthConfig() *AuthConfig {
-	return globalAuthConfig
+// NewMiddlewareService creates a new middleware service.
+func NewMiddlewareService(ts *TokenService, db DB) *MiddlewareService {
+	return &MiddlewareService{
+		tokenService: ts,
+		db:           db,
+	}
 }
 
-// GetCache returns the global validation cache
-func GetCache() *ValidationCache {
-	return globalCache
-}
-
-// ValidateTokenWithDB performs JWT validation + DB validation
-func ValidateTokenWithDB(ctx context.Context, tokenString string) (*AuthContext, error) {
-	if globalAuthConfig == nil {
-		return nil, fmt.Errorf("auth package not initialized - call auth.Initialize() first")
-	}
-	
-	// 1. Validate JWT structure, signature, expiry (unified function)
-	claims, err := ValidateToken(tokenString)
-	if err != nil {
-		return nil, fmt.Errorf("invalid token: %w", err)
-	}
-	
-	// Skip DB validation if configured
-	if globalAuthConfig.SkipDBValidation {
-		return buildAuthContext(claims), nil
-	}
-	
-	// 2. Ensure it's an access token for API calls
-	if claims.TokenType != AccessToken {
-		return nil, fmt.Errorf("access token required for API calls")
-	}
-	
-	// 3. Validate against database based on user type
-	if claims.UserType == "service" {
-		// Validate service is still active in DB
-		err = globalAuthConfig.ServiceValidator.ValidateServiceActive(ctx, claims.UserID)
-		if err != nil {
-			return nil, fmt.Errorf("service validation failed: %w", err)
-		}
-	} else {
-		// Validate user is still active in DB
-		var orgID string
-		if claims.OrganisationID != nil {
-			orgID = *claims.OrganisationID
-		}
-		err = globalAuthConfig.UserValidator.ValidateUserActive(ctx, claims.UserID, orgID)
-		if err != nil {
-			return nil, fmt.Errorf("user validation failed: %w", err)
-		}
-	}
-	
-	// Build and return auth context
-	return buildAuthContext(claims), nil
-}
-
-// ExtractTokenFromHeader extracts Bearer token from Authorization header
-func ExtractTokenFromHeader(authHeader string) (string, error) {
+// Authenticate is the core middleware logic. It validates the token,
+// checks the database, and injects the AuthContext into the request context.
+func (s *MiddlewareService) Authenticate(ctx context.Context, authHeader string) (context.Context, error) {
 	if authHeader == "" {
-		return "", fmt.Errorf("authorization header required")
+		return nil, ErrMissingToken
 	}
-	
+
 	parts := strings.Split(authHeader, " ")
 	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-		return "", fmt.Errorf("invalid authorization format. Expected: Bearer <token>")
+		return nil, ErrInvalidToken
 	}
-	
-	return parts[1], nil
-}
+	tokenString := parts[1]
 
-// ValidateRole checks if user has required role
-func ValidateRole(authCtx *AuthContext, allowedRoles []string) error {
-	if authCtx.AuthType != "user" {
-		return fmt.Errorf("user authentication required for role validation")
+	// 1. Parse token unverified to get OrganisationID
+	unverifiedClaims, err := s.tokenService.ParseUnverified(tokenString)
+	if err != nil {
+		return nil, ErrInvalidToken
 	}
-	
-	if authCtx.User == nil {
-		return fmt.Errorf("invalid user context")
-	}
-	
-	for _, allowedRole := range allowedRoles {
-		if authCtx.User.Role == allowedRole {
-			return nil // Role found
-		}
-	}
-	
-	return fmt.Errorf("insufficient permissions. Required roles: %v, user role: %s", 
-		allowedRoles, authCtx.User.Role)
-}
 
-// ValidateServicePermissions checks if service has required permissions
-func ValidateServicePermissions(ctx context.Context, authCtx *AuthContext, requiredPermissions []string) error {
-	if authCtx.AuthType != "service" {
-		return fmt.Errorf("service authentication required for permission validation")
+	// 2. Get org-specific config/secret from DB
+	orgConfig, err := s.db.GetOrgConfig(ctx, unverifiedClaims.OrganisationID)
+	if err != nil {
+		return nil, NewAuthError("CONFIG_ERROR", "Could not load configuration for user", 500)
 	}
-	
-	if authCtx.User == nil {
-		return fmt.Errorf("invalid authentication context")
-	}
-	
-	// Check if user/service has all required permissions
-	for _, requiredPerm := range requiredPermissions {
-		hasPermission := false
-		for _, userPerm := range authCtx.User.Permissions {
-			if userPerm == requiredPerm {
-				hasPermission = true
-				break
-			}
-		}
-		if !hasPermission {
-			return fmt.Errorf("insufficient permissions. Missing: %s", requiredPerm)
-		}
-	}
-	
-	// Additional DB validation for service permissions (if needed)
-	if globalAuthConfig != nil && !globalAuthConfig.SkipDBValidation {
-		err := globalAuthConfig.ServiceValidator.ValidateServicePermissions(
-			ctx, authCtx.User.UserID, requiredPermissions)
-		if err != nil {
-			return fmt.Errorf("service permission validation failed: %w", err)
-		}
-	}
-	
-	return nil
-}
 
-// buildAuthContext creates AuthContext from claims (unified for users and services)
-func buildAuthContext(claims *UserClaims) *AuthContext {
-	if claims == nil {
-		return nil
+	// 3. Validate the token with the correct secret
+	claims, err := s.tokenService.ValidateToken(tokenString, []byte(orgConfig.JWTSecret))
+	if err != nil {
+		return nil, err // ValidateToken returns ErrInvalidToken
 	}
 	
-	// Determine auth type for backward compatibility
-	authType := "user"
+	if claims.TokenType != AccessToken {
+		return nil, NewAuthError("INVALID_TOKEN_TYPE", "Access token required", 401)
+	}
+
+	// 4. Perform DB validation to ensure user/service is still active
 	if claims.UserType == "service" {
-		authType = "service"
+		if err := s.db.ValidateServiceActive(ctx, claims.UserID); err != nil {
+			return nil, err
+		}
+	} else {
+		orgIDStr := ""
+		if claims.OrganisationID != nil {
+			orgIDStr = *claims.OrganisationID
+		}
+		if err := s.db.ValidateUserActive(ctx, claims.UserID, orgIDStr); err != nil {
+			return nil, err
+		}
 	}
-	
-	return &AuthContext{
-		AuthType: authType,
-		User: &AuthUser{
-			UserID:         claims.UserID,
-			OrganisationID: claims.OrganisationID,
-			Username:       claims.Username,
-			Role:           claims.Role,
-			UserType:       claims.UserType,
-			Permissions:    claims.Permissions,
-		},
+
+	// 5. Create and inject AuthContext
+	authCtx := &AuthContext{
+		UserID:         claims.UserID,
+		OrganisationID: claims.OrganisationID,
+		Username:       claims.Username,
+		Role:           claims.Role,
+		UserType:       claims.UserType,
+		Permissions:    claims.Permissions,
+	}
+
+	// Return a new context with the value
+	return context.WithValue(ctx, AuthContextKey, authCtx), nil
+}
+
+// Middleware is a factory for creating a new HTTP middleware that enforces
+// a specific authorization requirement.
+func (s *MiddlewareService) Middleware(requirement *AuthRequirement) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// 1. Authentication
+			authHeader := r.Header.Get("Authorization")
+			ctx, err := s.Authenticate(r.Context(), authHeader)
+			if err != nil {
+				handleAuthError(w, err)
+				return
+			}
+
+			// 2. Authorization
+			if requirement != nil {
+				// Role check
+				if len(requirement.RequiredRoles) > 0 {
+					if err := AuthorizeRole(ctx, requirement.RequiredRoles); err != nil {
+						handleAuthError(w, err)
+						return
+					}
+				}
+
+				// Permission check
+				if len(requirement.RequiredPermissions) > 0 {
+					if err := AuthorizePermission(ctx, requirement.RequiredPermissions); err != nil {
+						handleAuthError(w, err)
+						return
+					}
+				}
+			}
+
+			// If all checks pass, proceed with the original handler
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
 	}
 }
 
-// Convenience functions for common roles
-func RequireAdmin(authCtx *AuthContext) error {
-	return ValidateRole(authCtx, []string{"admin"})
-}
-
-func RequireAdminOrManager(authCtx *AuthContext) error {
-	return ValidateRole(authCtx, []string{"admin", "agent-manager"})
-}
-
-// InvalidateUserCache removes user from cache (for immediate revocation)
-func InvalidateUserCache(userID, orgID string) {
-	if globalCache != nil {
-		globalCache.InvalidateUser(userID, orgID)
+// handleAuthError is a helper to write a structured auth error to the response.
+func handleAuthError(w http.ResponseWriter, err error) {
+	if authErr, ok := err.(*AuthError); ok {
+		http.Error(w, authErr.Message, authErr.Code)
+	} else {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 	}
 }
 
-// InvalidateServiceCache removes service from cache (for immediate revocation)
-func InvalidateServiceCache(serviceName string) {
-	if globalCache != nil {
-		globalCache.InvalidateService(serviceName)
+// --- Authorization Helpers ---
+
+// AuthorizeRole checks if the user in the context has one of the required roles.
+func AuthorizeRole(ctx context.Context, allowedRoles []string) error {
+	authCtx, ok := ctx.Value(AuthContextKey).(*AuthContext)
+	if !ok {
+		return ErrMissingToken // Or a more specific "context missing" error
 	}
+
+	for _, role := range allowedRoles {
+		if authCtx.Role == role {
+			return nil
+		}
+	}
+
+	return ErrInsufficientRole
 }
 
-// GetCacheStats returns cache statistics
-func GetCacheStats() map[string]interface{} {
-	if globalCache != nil {
-		return globalCache.GetStats()
+// AuthorizePermission checks if a service user has all required permissions.
+func AuthorizePermission(ctx context.Context, requiredPerms []string) error {
+    authCtx, ok := ctx.Value(AuthContextKey).(*AuthContext)
+	if !ok || authCtx.UserType != "service" {
+		return ErrInsufficientPerms
 	}
-	return map[string]interface{}{"cache": "disabled"}
+
+    // Create a map of the user's permissions for efficient lookup
+    userPerms := make(map[string]struct{})
+    for _, p := range authCtx.Permissions {
+        userPerms[p] = struct{}{}
+    }
+
+    // Check if all required permissions are present
+    for _, reqP := range requiredPerms {
+        if _, ok := userPerms[reqP]; !ok {
+            return ErrInsufficientPerms
+        }
+    }
+
+	return nil
 }

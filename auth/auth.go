@@ -5,20 +5,6 @@ import (
 	"fmt"
 )
 
-const Version = "2.0.0"
-
-// IsInitialized checks if the auth package has been initialized
-func IsInitialized() bool {
-	return globalAuthConfig != nil
-}
-
-// ClearCache clears all cached validation results
-func ClearCache() {
-	if globalCache != nil {
-		globalCache.ClearAll()
-	}
-}
-
 // Error types for better error handling
 
 // AuthError represents authentication/authorization errors
