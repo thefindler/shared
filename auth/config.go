@@ -2,9 +2,8 @@ package auth
 
 import (
 	"fmt"
-	"time"
 
-	"findler/shared/config"
+	"shared/config"
 )
 
 // JWTConfig holds JWT configuration

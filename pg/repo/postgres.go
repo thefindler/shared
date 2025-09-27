@@ -8,7 +8,6 @@ import (
 
 	"shared/pg/model"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/lib/pq"
 )
 
 type PostgresDB struct {
@@ -21,15 +20,13 @@ func NewPostgresDB(pool *pgxpool.Pool) *PostgresDB {
 
 func (p *PostgresDB) GetUserByUsername(ctx context.Context, username string) (*model.UserOrg, error) {
 	user := &model.UserOrg{}
-	query := `
-		SELECT id, organisation_id, username, role, user_type, permissions, password_hash, is_active
-		FROM user_org WHERE username = $1`
+	query := `SELECT id, org_id, username, role, user_type, COALESCE(permissions, '{}') AS permissions, 
+       password_hash, is_active FROM user_org WHERE username = $1`
 
 	err := p.pool.QueryRow(ctx, query, username).Scan(
 		&user.ID, &user.OrganisationID, &user.Username, &user.Role,
-		&user.UserType, pq.Array(&user.Permissions), &user.PasswordHash, &user.IsActive,
+		&user.UserType, &user.Permissions, &user.PasswordHash, &user.IsActive,
 	)
-
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("user not found")
 	}
@@ -39,14 +36,14 @@ func (p *PostgresDB) GetUserByUsername(ctx context.Context, username string) (*m
 func (p *PostgresDB) GetUserByID(ctx context.Context, userID string) (*model.UserOrg, error) {
 	user := &model.UserOrg{}
 	query := `
-		SELECT id, organisation_id, username, role, user_type, permissions, password_hash, is_active
+		SELECT id, org_id, username, role, user_type, COALESCE(permissions, '{}') AS permissions, password_hash, is_active
 		FROM user_org WHERE id = $1`
 
 	err := p.pool.QueryRow(ctx, query, userID).Scan(
 		&user.ID, &user.OrganisationID, &user.Username, &user.Role,
-		&user.UserType, pq.Array(&user.Permissions), &user.PasswordHash, &user.IsActive,
+		&user.UserType, &user.Permissions, &user.PasswordHash, &user.IsActive,
 	)
-
+	
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("user not found")
 	}
@@ -55,12 +52,12 @@ func (p *PostgresDB) GetUserByID(ctx context.Context, userID string) (*model.Use
 
 func (p *PostgresDB) CreateUser(ctx context.Context, user *model.UserOrg) error {
 	query := `
-		INSERT INTO user_org (id, organisation_id, username, role, user_type, permissions, password_hash, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+    INSERT INTO user_org (id, org_id, username, role, user_type, permissions, password_hash, is_active)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	_, err := p.pool.Exec(ctx, query,
 		user.ID, user.OrganisationID, user.Username, user.Role,
-		user.UserType, pq.Array(&user.Permissions), user.PasswordHash, user.IsActive,
+		user.UserType, &user.Permissions, user.PasswordHash, user.IsActive,
 	)
 	return err
 }

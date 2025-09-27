@@ -1,9 +1,6 @@
 package auth
 
 import (
-	"context"
-	"encoding/json"
-
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -63,26 +60,56 @@ func (h *AuthHandler) RefreshHandler(c *fiber.Ctx) error {
 	})
 }
 
-// CreateUserHandler handles new user creation. This is a protected endpoint.
+// CreateUserRequest defines the expected JSON body for creating a user.
+type CreateUserRequest struct {
+	Username    string   `json:"username" validate:"required,min=3"`
+	Password    string   `json:"password" validate:"required,min=8"`
+	Role        string   `json:"role" validate:"required,oneof=admin agent-manager agent"`
+	UserType    string   `json:"user_type" validate:"required,oneof=user service"`
+	Permissions []string `json:"permissions"` // Only applicable for service users
+}
+
+// CreateUserHandler handles new user creation.
+// It ensures the new user is created within the creating admin's organization.
 func (h *AuthHandler) CreateUserHandler(c *fiber.Ctx) error {
-	// Authorization is now handled by the middleware that wraps this handler.
-	var req struct {
-		Username    string   `json:"username"`
-		Password    string   `json:"password"`
-		Role        string   `json:"role"`
-		UserType    string   `json:"user_type"`
-		OrgID       *string  `json:"organisation_id"`
-		Permissions []string `json:"permissions"`
+	// 1. Get the authenticated admin's context, set by the middleware.
+	authCtx, ok := c.Locals(string(AuthContextKey)).(*AuthContext)
+	if !ok || authCtx == nil {
+		// This should technically be caught by the auth middleware, but it's good practice to check.
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized: Missing authentication context."})
 	}
 
+	// Double-check role, although middleware should enforce this. Defense in depth.
+	if authCtx.Role != "admin" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Forbidden: Only admins can create users."})
+	}
+	
+	// An admin must belong to an organization to create users in it.
+	if authCtx.OrganisationID == nil || *authCtx.OrganisationID == "" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Forbidden: Admin is not associated with an organization."})
+	}
+
+	// 2. Parse and validate the request body
+	var req CreateUserRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
+	// TODO: Add struct validation logic here.
 
-	err := h.service.CreateUser(c.Context(), req.Username, req.Password, req.Role, req.UserType, req.OrgID, req.Permissions)
+	// 3. Call the auth service to create the user, inheriting the admin's OrgID.
+	err := h.service.CreateUser(
+		c.Context(),
+		req.Username,
+		req.Password,
+		req.Role,
+		req.UserType,
+		authCtx.OrganisationID, // Inherit OrgID from the authenticated admin
+		req.Permissions,
+	)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		// TODO: Improve error handling to check for specific errors like "username exists".
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create user"})
 	}
 
-	return c.SendStatus(fiber.StatusCreated)
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"message": "User created successfully"})
 }

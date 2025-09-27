@@ -104,66 +104,36 @@ func NewConfigManager() (*ConfigManager, error) {
 
 // Get retrieves a configuration value with proper key normalization
 func (cm *ConfigManager) Get(key string) string {
-	ctx := context.Background()
-	
-	// For env-file source, use the key as-is
-	// For other sources (like Azure Key Vault), normalize the key
-	var searchKey string
-	if cm.configSource == "env-file" {
-		searchKey = key
-	} else {
-		searchKey = cm.normalizeKey(key)
-	}
-	
-	// Try primary provider first
-	value, err := cm.provider.Get(ctx, searchKey)
-	if err != nil {
-		// Only try fallback if primary provider is NOT env-file
-		// (because if primary is env-file, fallback is also env-file, so it will fail the same way)
-		if cm.configSource != "env-file" {
-			fmt.Printf("DEBUG: Primary provider failed for key %s (searched as: %s), falling back to env-file: %v\n", key, searchKey, err)
-			
-			// Try fallback provider with original key (env vars use underscores)
-			value, err = cm.fallbackProvider.Get(ctx, key)
-			if err != nil {
-				fmt.Printf("DEBUG: Fallback provider also failed for key %s: %v\n", key, err)
-				return ""
-			}
-		} else {
-			// For env-file source, just return empty string without trying fallback
-			return ""
-		}
-	}
-
-	return value
+	// The internal get method handles the fallback logic.
+	// We pass an empty string as the default value.
+	return cm.get(key, "")
 }
 
-// GetWithDefault retrieves a configuration value with fallback
+// GetWithDefault retrieves a configuration value with a specified default.
+// It tries the primary provider first, then environment variables, and finally
+// returns the default value if the key is not found in any source.
 func (cm *ConfigManager) GetWithDefault(key, defaultValue string) string {
+	return cm.get(key, defaultValue)
+}
+
+// get is the internal method that orchestrates the key retrieval logic.
+func (cm *ConfigManager) get(key, defaultValue string) string {
 	ctx := context.Background()
-	
-	// For env-file source, use the key as-is
-	// For other sources (like Azure Key Vault), normalize the key
-	var searchKey string
-	if cm.configSource == "env-file" {
-		searchKey = key
-	} else {
-		searchKey = cm.normalizeKey(key)
-	}
-	
-	// Try primary provider first
+
+	// 1. Determine the search key for the primary provider.
+	// For non-env sources, this might involve normalization (e.g., FOO_BAR -> foo-bar).
+	searchKey := cm.normalizeKey(key)
+
+	// 2. Try the primary provider.
 	value, err := cm.provider.Get(ctx, searchKey)
+
+	// 3. If the primary provider fails (error or empty value), try the fallback.
+	// The fallback always uses the original, non-normalized key (e.g., FOO_BAR).
 	if err != nil || value == "" {
-		// Only try fallback if primary provider is NOT env-file
-		// (because if primary is env-file, fallback is also env-file, so it will fail the same way)
-		if cm.configSource != "env-file" {
-			// Try fallback provider with original key (env vars use underscores)
-			value, err = cm.fallbackProvider.Get(ctx, key)
-			if err != nil || value == "" {
-				return defaultValue
-			}
-		} else {
-			// For env-file source, return default value directly
+		// The fallback provider is always the environment file provider.
+		value, err = cm.fallbackProvider.Get(ctx, key)
+		if err != nil || value == "" {
+			// If all sources fail, return the default value.
 			return defaultValue
 		}
 	}

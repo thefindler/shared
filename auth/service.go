@@ -26,7 +26,7 @@ func NewAuthService(db model.DB, ts *TokenService) *AuthService {
 func (s *AuthService) Login(ctx context.Context, username, password string) (string, string, error) {
 	user, err := s.db.GetUserByUsername(ctx, username)
 	if err != nil {
-		return "", "", NewAuthError("INVALID_CREDENTIALS", "Invalid username or password", 401)
+		return "", "", NewAuthError("INVALID_CREDENTIALS", "Invalid username and password", 401)
 	}
 
 	if !user.IsActive {
@@ -34,7 +34,7 @@ func (s *AuthService) Login(ctx context.Context, username, password string) (str
 	}
 
 	if !VerifyPassword(password, user.PasswordHash) {
-		return "", "", NewAuthError("INVALID_CREDENTIALS", "Invalid username or password", 401)
+		return "", "", NewAuthError("INVALID_CREDENTIALS", "Invalid username and password", 401)
 	}
 
 	orgConfig, err := s.db.GetOrgConfig(ctx, user.OrganisationID)

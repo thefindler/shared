@@ -12,7 +12,7 @@ type UserOrg struct {
 	Username       string    `json:"username"`
 	Role           string    `json:"role"`
 	UserType       string    `json:"user_type"` // "user" or "service"
-	Permissions    []string  `json:"permissions"`
+	Permissions    []string   `json:"permissions"` 
 	PasswordHash   string    `json:"-"` // Never expose in JSON
 	IsActive       bool      `json:"is_active"`
 }
