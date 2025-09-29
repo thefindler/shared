@@ -3,7 +3,7 @@ package auth
 import (
 	"fmt"
 
-	"shared/config"
+	"github.com/thefindler/shared/config"
 )
 
 // JWTConfig holds JWT configuration
