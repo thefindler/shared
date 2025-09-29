@@ -14,7 +14,6 @@ const (
 	// Future providers can be added here:
 	// ProviderTypeGCPSecretManager ProviderType = "gcp-secretmanager"
 	// ProviderTypeAWSSecretsManager ProviderType = "aws-secretsmanager"
-	// ProviderTypeVault ProviderType = "vault"
 )
 
 // ConfigProvider defines the interface for any configuration source
