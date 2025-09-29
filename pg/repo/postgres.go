@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"shared/pg/model"
+	"github.com/thefindler/shared/pg/model"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
