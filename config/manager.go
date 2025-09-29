@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"shared/config/providers"
+	"github.com/thefindler/shared/config/providers"
 )
 
 // ConfigManager manages configuration from different sources

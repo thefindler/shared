@@ -5,7 +5,7 @@ import (
 	"strings"
 	"net/http"
 
-	"shared/pg/model"
+	"github.com/thefindler/shared/pg/model"
 	"github.com/gofiber/fiber/v2"
 )
 
