@@ -112,27 +112,6 @@ func (akp *AzureKeyVaultProvider) GetWithDefault(ctx context.Context, key, defau
 	return value, nil
 }
 
-// TestConnection tests connectivity to Azure Key Vault
-func (akp *AzureKeyVaultProvider) TestConnection(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	// Try to get a simple secret to test connectivity
-	// We'll use a test key that might not exist, but the error should be different from connection errors
-	_, err := akp.client.GetSecret(ctx, "test-connection", "", nil)
-	if err != nil {
-		// If it's a 404 (secret not found), that's fine - it means we can connect
-		// If it's a connection error, that's what we want to catch
-		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
-			fmt.Printf("INFO: Key Vault connection test successful\n")
-			return nil
-		}
-		return fmt.Errorf("failed to connect to Key Vault: %w", err)
-	}
-
-	fmt.Printf("INFO: Key Vault connection test successful\n")
-	return nil
-}
 
 // Close cleans up resources
 func (akp *AzureKeyVaultProvider) Close() error {

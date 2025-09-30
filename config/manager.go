@@ -86,11 +86,6 @@ func NewConfigManager() (*ConfigManager, error) {
 		return nil, fmt.Errorf("failed to create fallback provider: %w", err)
 	}
 
-	// Test primary provider connection
-	if err := provider.TestConnection(context.Background()); err != nil {
-		fmt.Printf("WARN: Primary provider connection failed, will use fallback: %v\n", err)
-	}
-
 	cm := &ConfigManager{
 		configSource:     configSource,
 		provider:         provider,

@@ -35,20 +35,3 @@ func (ep *EnvFileProvider) GetWithDefault(ctx context.Context, key, defaultValue
 	}
 	return value, nil
 }
-
-// TestConnection tests connectivity (always succeeds for env files)
-func (ep *EnvFileProvider) TestConnection(ctx context.Context) error {
-	// Environment variables are always available
-	return nil
-}
-
-// Close cleans up resources (no cleanup needed for env files)
-func (ep *EnvFileProvider) Close() error {
-	return nil
-}
-
-// validateEnvFileConfig validates environment file provider configuration
-func validateEnvFileConfig(config ProviderConfig) error {
-	// No specific validation needed for env file provider
-	return nil
-}

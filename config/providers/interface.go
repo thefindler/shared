@@ -24,11 +24,6 @@ type ConfigProvider interface {
 	// GetWithDefault retrieves a configuration value with fallback to default
 	GetWithDefault(ctx context.Context, key, defaultValue string) (string, error)
 	
-	// TestConnection tests connectivity to the configuration source
-	TestConnection(ctx context.Context) error
-	
-	// Close cleans up resources
-	Close() error
 }
 
 // ProviderConfig holds configuration for a specific provider
