@@ -97,7 +97,6 @@ func NewConfigManager() (*ConfigManager, error) {
 		fallbackProvider: fallbackProvider,
 	}
 
-	fmt.Printf("INFO: Configuration manager initialized successfully with config source: %s\n", configSource)
 
 	return cm, nil
 }
