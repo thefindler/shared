@@ -75,7 +75,7 @@ func (p *PostgresDB) GetOrgConfig(ctx context.Context, orgID *string) (*model.Or
 	}
 
 	var accessHours, refreshHours int
-	query := `SELECT access_token_ttl_hours, refresh_token_ttl_hours FROM organization WHERE id = $1`
+	query := `SELECT access_token_ttl_hours, refresh_token_ttl_hours FROM organisation WHERE id = $1`
 
 	err := p.pool.QueryRow(ctx, query, *orgID).Scan(&accessHours, &refreshHours)
 	if err != nil {
