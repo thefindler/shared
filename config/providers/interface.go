@@ -53,22 +53,3 @@ func (pf *ProviderFactory) NewProvider(config ProviderConfig) (ConfigProvider, e
 		return nil, fmt.Errorf("unsupported provider type: %s", config.ProviderType)
 	}
 }
-
-// ValidateProviderConfig validates the configuration for a specific provider
-func (pf *ProviderFactory) ValidateProviderConfig(config ProviderConfig) error {
-	switch config.ProviderType {
-	case ProviderTypeAzureKeyVault:
-		return validateAzureKeyVaultConfig(config)
-	case ProviderTypeEnvFile:
-		return validateEnvFileConfig(config)
-	// Future providers can be added here:
-	// case ProviderTypeGCPSecretManager:
-	//     return validateGCPSecretManagerConfig(config)
-	// case ProviderTypeAWSSecretsManager:
-	//     return validateAWSSecretsManagerConfig(config)
-	// case ProviderTypeVault:
-	//     return validateVaultConfig(config)
-	default:
-		return fmt.Errorf("unsupported provider type: %s", config.ProviderType)
-	}
-} 

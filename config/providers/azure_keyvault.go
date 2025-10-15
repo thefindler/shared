@@ -140,17 +140,3 @@ func (akp *AzureKeyVaultProvider) getSecretFromKeyVault(ctx context.Context, sec
 
 	return *resp.Value, nil
 }
-
-// validateAzureKeyVaultConfig validates Azure Key Vault provider configuration
-func validateAzureKeyVaultConfig(config ProviderConfig) error {
-	vaultURL, ok := config.Config["vault_url"].(string)
-	if !ok || vaultURL == "" {
-		return fmt.Errorf("vault_url is required for Azure Key Vault provider")
-	}
-
-	// Basic URL validation
-	if !strings.HasPrefix(vaultURL, "https://") || !strings.Contains(vaultURL, ".vault.azure.net") {
-		return fmt.Errorf("invalid vault_url format: must be https://*.vault.azure.net")
-	}
-	return nil
-} 

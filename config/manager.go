@@ -64,11 +64,6 @@ func NewConfigManager() (*ConfigManager, error) {
 		Config:       configSourceConfig,
 	}
 
-	// Validate provider configuration
-	if err := factory.ValidateProviderConfig(providerConfig); err != nil {
-		return nil, fmt.Errorf("invalid provider configuration: %w", err)
-	}
-
 	// Create primary provider
 	provider, err := factory.NewProvider(providerConfig)
 	if err != nil {
