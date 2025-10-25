@@ -31,16 +31,23 @@ func NewMiddlewareService(ts *TokenService, db model.DB) *MiddlewareService {
 // Authenticate is the core middleware logic. It validates the token,
 // checks the database, and injects the AuthContext into the request context.
 func (s *MiddlewareService) Authenticate(c *fiber.Ctx) (*AuthContext, error) {
+	var tokenString string
+	
+	// First, try to get token from Authorization header
 	authHeader := c.Get("Authorization")
-	if authHeader == "" {
-		return nil, ErrMissingToken
+	if authHeader != "" {
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			return nil, ErrInvalidToken
+		}
+		tokenString = parts[1]
+	} else {
+		// Fallback: Check for token in query parameters (needed for WebSocket connections)
+		tokenString = c.Query("token")
+		if tokenString == "" {
+			return nil, ErrMissingToken
+		}
 	}
-
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-		return nil, ErrInvalidToken
-	}
-	tokenString := parts[1]
 
 	// 1. Validate the token with the global secret
 	claims, err := s.tokenService.ValidateToken(tokenString)
